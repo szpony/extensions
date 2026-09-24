@@ -10,8 +10,13 @@ import OpenInDefaultBrowserAction from "./OpenInDefaultBrowserAction";
 
 export type UrlItem = { title?: string; url: string };
 
-const UrlListItem = (props: { item: UrlItem; accessory?: string; id?: string }) => {
-  const { item, accessory, id } = props;
+const UrlListItem = (props: {
+  item: UrlItem;
+  accessory?: string;
+  id?: string;
+  onOpen?: () => void | Promise<void>;
+}) => {
+  const { item, accessory, id, onOpen } = props;
   return (
     <List.Item
       id={id}
@@ -22,10 +27,8 @@ const UrlListItem = (props: { item: UrlItem; accessory?: string; id?: string }) 
       actions={
         <ActionPanel>
           <ActionPanel.Section>
-            {/* UrlListItem only renders inside the Command Bar, so this always
-                forces an immediate pop to root - see OpenTabAction. */}
-            <OpenInOrionAction url={item.url} immediatePopToRoot />
-            <OpenInDefaultBrowserAction url={item.url} immediatePopToRoot />
+            <OpenInOrionAction url={item.url} onOpen={onOpen} />
+            <OpenInDefaultBrowserAction url={item.url} onOpen={onOpen} />
           </ActionPanel.Section>
           <ActionPanel.Section>
             <CopyUrlAction url={item.url} />

@@ -19,8 +19,8 @@ type CurrentTabLocation = {
 // JXA exposes the current tab's URL and title but not its object identity. In
 // the common case that pair is unique, it is both fast and sufficient. When
 // the pair is duplicated (or a page is briefly in flight), use the scripting
-// dictionary's object comparison as a narrow fallback so a duplicate tab is
-// never labelled as current by mistake.
+// dictionary's object comparison as a narrow fallback so an empty Command Bar
+// never labels or selects an arbitrary duplicate tab as current.
 async function getCurrentTabLocation(): Promise<CurrentTabLocation | undefined> {
   try {
     const result = await runAppleScript(
@@ -144,10 +144,7 @@ async function fetchLocalTabsRaw(options?: { silent?: boolean }): Promise<Tab[] 
   }));
 }
 
-async function fetchLocalTabs(): Promise<Tab[]> {
-  return (await fetchLocalTabsRaw()) ?? [];
-}
-
+const FOLLOW_UP_REFRESH_DELAY_MS = 800;
 const COMMAND_BAR_REFRESH_INTERVAL_MS = 1000;
 
 type UseTabsOptions = {
@@ -171,39 +168,23 @@ function tabsAreEqual(current: Tab[] | undefined, next: Tab[]): boolean {
 
 const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
   const tabs = useCachedPromise(fetchLocalTabs, [], { keepPreviousData: true });
-  const pollInFlight = useRef(false);
+  const refreshInFlight = useRef(false);
   const latestTabsRef = useRef<Tab[] | undefined>(undefined);
-  // Bumped by every authoritative local write (currently just markTabActive).
-  // A poll captures this at the start of its JXA round trip; if it has moved
-  // by the time the poll resolves, a more recent local change already
-  // superseded whatever the poll saw, so that stale result must be discarded.
-  const mutationVersionRef = useRef(0);
 
   useEffect(() => {
     latestTabsRef.current = tabs.data;
   }, [tabs.data]);
 
-  // Background-poll only: silent (no failure toast) and applied only when it
-  // still reflects reality (deduped against the last snapshot, discarded if
-  // superseded by a newer local write). User-triggered refreshes - the
-  // "Refresh Open Tabs" action, the refresh after Close Tab, in both the
-  // Command Bar and the standalone Search Tabs command - must keep using
-  // `tabs.revalidate` instead, further down: they need their own loading
-  // state and failure toast, and must not be skipped just because a poll
-  // happens to be in flight at that moment.
-  const pollRefresh = useCallback(async () => {
-    if (pollInFlight.current) return;
+  // Avoid overlapping JXA requests when Orion takes longer than one interval
+  // to return its tab list. A poll with an identical snapshot must not call
+  // revalidate(), because that needlessly re-renders the Command Bar and can
+  // make an otherwise unchanged list visibly flicker.
+  const refresh = useCallback(async () => {
+    if (refreshInFlight.current) return;
 
-    pollInFlight.current = true;
-    const versionAtStart = mutationVersionRef.current;
+    refreshInFlight.current = true;
     try {
-      // Silent: a background poll failing (Orion quit, or briefly declined
-      // the request) must not spam a failure toast every interval tick, and
-      // must not be treated as "zero tabs" - keep the last known-good
-      // snapshot instead of wiping it.
-      const nextTabs = await fetchLocalTabsRaw({ silent: true });
-      if (nextTabs === undefined) return;
-      if (mutationVersionRef.current !== versionAtStart) return;
+      const nextTabs = await fetchLocalTabs();
       if (tabsAreEqual(latestTabsRef.current, nextTabs)) return;
 
       await tabs.mutate(Promise.resolve(nextTabs), {
@@ -212,7 +193,7 @@ const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
         shouldRevalidateAfter: false,
       });
     } finally {
-      pollInFlight.current = false;
+      refreshInFlight.current = false;
     }
   }, [tabs.mutate]);
 
@@ -228,10 +209,6 @@ const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
       const current = latestTabsRef.current;
       if (!current) return;
 
-      // A poll already in flight may have started reading Orion before this
-      // switch happened, and would otherwise resolve afterward and overwrite
-      // this optimistic update with its now-stale snapshot.
-      mutationVersionRef.current += 1;
       const next = current.map((t) => ({
         ...t,
         is_current: t.window_id === tab.window_id && t.tab_index === tab.tab_index,
@@ -245,6 +222,17 @@ const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
     [tabs.mutate],
   );
 
+  // Orion can expose a newly created tab to its scripting bridge a short time
+  // after the Command Bar first opens. Read immediately on mount (the hook's
+  // normal behavior), then make one bounded follow-up read.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void refresh();
+    }, FOLLOW_UP_REFRESH_DELAY_MS);
+
+    return () => clearTimeout(timer);
+  }, [refresh]);
+
   // Open Tabs are dynamic. While the Command Bar remains visible, refresh at
   // a modest cadence so tab opens and closes appear without a manual action.
   // The interval is opt-in: the standalone Search Tabs command keeps its
@@ -253,21 +241,11 @@ const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
     if (!refreshWhileOpen) return;
 
     const timer = setInterval(() => {
-      void pollRefresh();
+      void refresh();
     }, COMMAND_BAR_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [pollRefresh, refreshWhileOpen]);
-
-  // A user-triggered refresh (the "Refresh Open Tabs" action, or the refresh
-  // after Close Tab) is authoritative: any poll already in flight when it
-  // starts read Orion before whatever this refresh is about to learn, so
-  // that poll's eventual result must not be allowed to overwrite this
-  // refresh's, no matter which of the two resolves last.
-  const refresh = useCallback(async () => {
-    mutationVersionRef.current += 1;
-    await tabs.revalidate();
-  }, [tabs.revalidate]);
+  }, [refresh, refreshWhileOpen]);
 
   return { ...tabs, refresh, markTabActive };
 };
