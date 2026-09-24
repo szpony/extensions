@@ -172,7 +172,7 @@ function tabsAreEqual(current: Tab[] | undefined, next: Tab[]): boolean {
 
 const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
   const tabs = useCachedPromise(fetchLocalTabs, [], { keepPreviousData: true });
-  const refreshInFlight = useRef(false);
+  const pollInFlight = useRef(false);
   const latestTabsRef = useRef<Tab[] | undefined>(undefined);
   // Bumped by every authoritative local write (currently just markTabActive).
   // A poll captures this at the start of its JXA round trip; if it has moved
@@ -184,14 +184,18 @@ const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
     latestTabsRef.current = tabs.data;
   }, [tabs.data]);
 
-  // Avoid overlapping JXA requests when Orion takes longer than one interval
-  // to return its tab list. A poll with an identical snapshot must not call
-  // revalidate(), because that needlessly re-renders the Command Bar and can
-  // make an otherwise unchanged list visibly flicker.
-  const refresh = useCallback(async () => {
-    if (refreshInFlight.current) return;
+  // Background-only: silent (no failure toast) and applied only when it still
+  // reflects reality (deduped against the last snapshot, discarded if
+  // superseded by a newer local write). User-triggered refreshes - the
+  // "Refresh Open Tabs" action, the refresh after Close Tab, in both the
+  // Command Bar and the standalone Search Tabs command - must keep using
+  // `tabs.revalidate` instead, further down: they need their own loading
+  // state and failure toast, and must not be skipped just because a poll
+  // happens to be in flight at that moment.
+  const pollRefresh = useCallback(async () => {
+    if (pollInFlight.current) return;
 
-    refreshInFlight.current = true;
+    pollInFlight.current = true;
     const versionAtStart = mutationVersionRef.current;
     try {
       // Silent: a background poll failing (Orion quit, or briefly declined
@@ -209,7 +213,7 @@ const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
         shouldRevalidateAfter: false,
       });
     } finally {
-      refreshInFlight.current = false;
+      pollInFlight.current = false;
     }
   }, [tabs.mutate]);
 
@@ -247,11 +251,11 @@ const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
   // normal behavior), then make one bounded follow-up read.
   useEffect(() => {
     const timer = setTimeout(() => {
-      void refresh();
+      void pollRefresh();
     }, FOLLOW_UP_REFRESH_DELAY_MS);
 
     return () => clearTimeout(timer);
-  }, [refresh]);
+  }, [pollRefresh]);
 
   // Open Tabs are dynamic. While the Command Bar remains visible, refresh at
   // a modest cadence so tab opens and closes appear without a manual action.
@@ -261,18 +265,18 @@ const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
     if (!refreshWhileOpen) return;
 
     const timer = setInterval(() => {
-      void refresh();
+      void pollRefresh();
     }, COMMAND_BAR_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [refresh, refreshWhileOpen]);
+  }, [pollRefresh, refreshWhileOpen]);
 
-  return { ...tabs, refresh, markTabActive };
+  return { ...tabs, markTabActive };
 };
 
 const useTabs = (options?: UseTabsOptions) => {
   const tabs = useLocalTabs(options);
-  return { tabs: tabs.data, refresh: tabs.refresh, markTabActive: tabs.markTabActive };
+  return { tabs: tabs.data, refresh: tabs.revalidate, markTabActive: tabs.markTabActive };
 };
 
 export default useTabs;
