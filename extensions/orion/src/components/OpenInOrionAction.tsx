@@ -2,7 +2,15 @@ import { Action, closeMainWindow, Icon, PopToRootType } from "@raycast/api";
 
 import { closeLauncherTabs, openInOrion } from "../utils";
 
-const OpenInOrionAction = (props: { url: string; title?: string; onOpen?: () => void | Promise<void> }) => (
+// `immediatePopToRoot` is opt-in - see OpenTabAction for why only the Command
+// Bar passes it, while the standalone Bookmarks/Reading List/History commands
+// that also render this action keep respecting the user's own preference.
+const OpenInOrionAction = (props: {
+  url: string;
+  title?: string;
+  immediatePopToRoot?: boolean;
+  onOpen?: () => void | Promise<void>;
+}) => (
   <Action
     title={props.title ?? "Open in Orion"}
     icon={Icon.Globe}
@@ -11,7 +19,10 @@ const OpenInOrionAction = (props: { url: string; title?: string; onOpen?: () => 
       // front); otherwise a lingering raycast:// tab re-fires the deeplink.
       await closeLauncherTabs();
       await openInOrion(props.url);
-      await closeMainWindow({ clearRootSearch: true, popToRootType: PopToRootType.Immediate });
+      await closeMainWindow({
+        clearRootSearch: true,
+        ...(props.immediatePopToRoot ? { popToRootType: PopToRootType.Immediate } : {}),
+      });
       // Clear persistent command state only after the palette has hidden.
       await props.onOpen?.();
     }}

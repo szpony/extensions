@@ -31,15 +31,19 @@ const activateTab = async (tab: Tab) =>
     }
   `);
 
-// `closeLaunchers` is opt-in (the Command Bar passes it) so the standalone
-// "Search Tabs" command doesn't make an extra AppleScript call on every open.
+// `closeLaunchers` and `immediatePopToRoot` are both opt-in (the Command Bar
+// passes them) so the standalone "Search Tabs" command neither makes an extra
+// AppleScript call on every open, nor stops respecting the user's Pop to Root
+// Search preference - only the Command Bar's background poll depends on
+// always tearing down immediately after a result opens.
 const OpenTabAction = (props: {
   tab: Tab;
   closeLaunchers?: boolean;
+  immediatePopToRoot?: boolean;
   onOpen?: () => void | Promise<void>;
   onActivate?: (tab: Tab) => void;
 }) => {
-  const { tab, closeLaunchers, onOpen, onActivate } = props;
+  const { tab, closeLaunchers, immediatePopToRoot, onOpen, onActivate } = props;
   return (
     <Action
       title="Open in Browser"
@@ -59,7 +63,10 @@ const OpenTabAction = (props: {
         // Opening a result completes this Command Bar interaction. Return to
         // root immediately so the next hotkey starts a fresh command session,
         // independent of the user's delayed Pop to Root Search preference.
-        await closeMainWindow({ clearRootSearch: true, popToRootType: PopToRootType.Immediate });
+        await closeMainWindow({
+          clearRootSearch: true,
+          ...(immediatePopToRoot ? { popToRootType: PopToRootType.Immediate } : {}),
+        });
         // The Command Bar is now hidden, so clearing its persistent search
         // state cannot render an empty-results frame before the close.
         await onOpen?.();

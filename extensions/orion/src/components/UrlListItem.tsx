@@ -27,8 +27,10 @@ const UrlListItem = (props: {
       actions={
         <ActionPanel>
           <ActionPanel.Section>
-            <OpenInOrionAction url={item.url} onOpen={onOpen} />
-            <OpenInDefaultBrowserAction url={item.url} onOpen={onOpen} />
+            {/* UrlListItem only renders inside the Command Bar, so this always
+                forces an immediate pop to root - see OpenTabAction. */}
+            <OpenInOrionAction url={item.url} immediatePopToRoot onOpen={onOpen} />
+            <OpenInDefaultBrowserAction url={item.url} immediatePopToRoot onOpen={onOpen} />
           </ActionPanel.Section>
           <ActionPanel.Section>
             <CopyUrlAction url={item.url} />
