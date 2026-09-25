@@ -148,7 +148,6 @@ async function fetchLocalTabs(): Promise<Tab[]> {
   return (await fetchLocalTabsRaw()) ?? [];
 }
 
-const FOLLOW_UP_REFRESH_DELAY_MS = 800;
 const COMMAND_BAR_REFRESH_INTERVAL_MS = 1000;
 
 type UseTabsOptions = {
@@ -245,17 +244,6 @@ const useLocalTabs = ({ refreshWhileOpen = false }: UseTabsOptions = {}) => {
     },
     [tabs.mutate],
   );
-
-  // Orion can expose a newly created tab to its scripting bridge a short time
-  // after the Command Bar first opens. Read immediately on mount (the hook's
-  // normal behavior), then make one bounded follow-up read.
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      void pollRefresh();
-    }, FOLLOW_UP_REFRESH_DELAY_MS);
-
-    return () => clearTimeout(timer);
-  }, [pollRefresh]);
 
   // Open Tabs are dynamic. While the Command Bar remains visible, refresh at
   // a modest cadence so tab opens and closes appear without a manual action.
