@@ -3,12 +3,7 @@ import { Action, closeMainWindow, Icon, open, PopToRootType } from "@raycast/api
 // `immediatePopToRoot` is opt-in - only the Command Bar passes it, while the
 // standalone commands that also render this action keep respecting the
 // user's own Pop to Root Search preference.
-const OpenInDefaultBrowserAction = (props: {
-  url: string;
-  title?: string;
-  immediatePopToRoot?: boolean;
-  onOpen?: () => void | Promise<void>;
-}) => (
+const OpenInDefaultBrowserAction = (props: { url: string; title?: string; immediatePopToRoot?: boolean }) => (
   <Action
     title={props.title ?? "Open in Default Browser"}
     icon={Icon.Globe}
@@ -18,8 +13,6 @@ const OpenInDefaultBrowserAction = (props: {
         clearRootSearch: true,
         ...(props.immediatePopToRoot ? { popToRootType: PopToRootType.Immediate } : {}),
       });
-      // Do this after hiding the palette to avoid a visible empty-list frame.
-      await props.onOpen?.();
     }}
   />
 );

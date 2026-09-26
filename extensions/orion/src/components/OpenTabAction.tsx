@@ -40,10 +40,9 @@ const OpenTabAction = (props: {
   tab: Tab;
   closeLaunchers?: boolean;
   immediatePopToRoot?: boolean;
-  onOpen?: () => void | Promise<void>;
   onActivate?: (tab: Tab) => void;
 }) => {
-  const { tab, closeLaunchers, immediatePopToRoot, onOpen, onActivate } = props;
+  const { tab, closeLaunchers, immediatePopToRoot, onActivate } = props;
   return (
     <Action
       title="Open in Browser"
@@ -67,9 +66,6 @@ const OpenTabAction = (props: {
           clearRootSearch: true,
           ...(immediatePopToRoot ? { popToRootType: PopToRootType.Immediate } : {}),
         });
-        // The Command Bar is now hidden, so clearing its persistent search
-        // state cannot render an empty-results frame before the close.
-        await onOpen?.();
       }}
     />
   );

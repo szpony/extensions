@@ -14,7 +14,6 @@ const Actions = (props: {
   refresh: () => void;
   closeLaunchers?: boolean;
   immediatePopToRoot?: boolean;
-  onOpen?: () => void | Promise<void>;
   onActivate?: (tab: Tab) => void;
 }) => (
   <ActionPanel>
@@ -23,14 +22,9 @@ const Actions = (props: {
         tab={props.tab}
         closeLaunchers={props.closeLaunchers}
         immediatePopToRoot={props.immediatePopToRoot}
-        onOpen={props.onOpen}
         onActivate={props.onActivate}
       />
-      <OpenInDefaultBrowserAction
-        url={props.tab.url}
-        immediatePopToRoot={props.immediatePopToRoot}
-        onOpen={props.onOpen}
-      />
+      <OpenInDefaultBrowserAction url={props.tab.url} immediatePopToRoot={props.immediatePopToRoot} />
     </ActionPanel.Section>
     <ActionPanel.Section>
       <CopyUrlAction url={props.tab.url} />
@@ -61,7 +55,6 @@ const TabListItem = (props: {
   closeLaunchers?: boolean;
   immediatePopToRoot?: boolean;
   id?: string;
-  onOpen?: () => void | Promise<void>;
   onActivate?: (tab: Tab) => void;
 }) => {
   const url = props.tab.url;
@@ -87,7 +80,6 @@ const TabListItem = (props: {
           refresh={props.refresh}
           closeLaunchers={props.closeLaunchers}
           immediatePopToRoot={props.immediatePopToRoot}
-          onOpen={props.onOpen}
           onActivate={props.onActivate}
         />
       }

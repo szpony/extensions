@@ -29,6 +29,7 @@ import {
 } from "./utils";
 
 const LIMITS = { tabs: 6, bookmarks: 6, reading: 4, history: 8 };
+const TOP_HIT_ITEM_ID = "top-hit";
 const CURRENT_TAB_HANDOFF_SETTLE_MS = 50;
 const CURRENT_TAB_HANDOFF_FALLBACK_MS = 150;
 const CURRENT_TAB_FINAL_ACK_TIMEOUT_MS = 100;
@@ -220,6 +221,14 @@ export default function Command() {
   // asked Raycast to select. Those two values can temporarily differ while
   // asynchronous local results reorder the list.
   const nativeSelectionRef = useRef<string | null>(null);
+  // Holds the last Top Hit confirmed while History was current, plus the
+  // profile it was confirmed under, so it can be reused below across the
+  // brief window where the History query hasn't caught up with the latest
+  // keystroke yet - but only while it still plausibly belongs to what is
+  // currently typed (see the relevance check at the reuse site below), not
+  // whenever the user has since typed something unrelated or switched
+  // profiles.
+  const lastConfirmedHistoryTopHitRef = useRef<{ profileId: string; hit: Hit } | undefined>(undefined);
   const q = query.trim().toLowerCase();
   const hasQuery = q.length > 0;
 
@@ -252,17 +261,6 @@ export default function Command() {
       userNavigated: false,
     };
     setSelectedItemId(undefined);
-  };
-
-  // Raycast keeps a command's React process alive after closeMainWindow().
-  // The List is controlled for its full lifetime, so clearing this state while
-  // the window is hidden guarantees a fresh search on the next invocation
-  // without ever rendering an empty-results frame to the user.
-  const resetCommand = () => {
-    selectionSessionRef.current = undefined;
-    nativeSelectionRef.current = null;
-    setSelectedItemId(undefined);
-    setQuery("");
   };
 
   // Loading local history and remote suggestions for each keystroke should not
@@ -324,6 +322,33 @@ export default function Command() {
     topHit = deduplicateRankedHits(candidates).sort(compareRankedHits)[0]?.hit;
   }
 
+  // `historyHits` is excluded above while the History query hasn't caught up
+  // with the latest keystroke yet (see useHistorySearch's staleness guard),
+  // so recomputing Top Hit during that gap can hand it to a lower-priority
+  // Tab or Bookmark match - or to nothing - only for History to reclaim it a
+  // few milliseconds later once the fresh result lands. Reuse the previous
+  // History-backed Top Hit across that gap instead of letting it flicker to
+  // a different candidate and back - but only while it is still plausibly
+  // what the user is typing towards: the same profile, and still relevant to
+  // the text typed so far. Otherwise (a profile switch, or text unrelated to
+  // it) it must not be shown, or Enter could open a stale destination the
+  // user never intended. A genuinely different result, once History is
+  // current again, still replaces it normally.
+  if (hasCurrentHistoryResult) {
+    lastConfirmedHistoryTopHitRef.current =
+      topHit?.kind === "url" && topHit.source === "History" ? { profileId: selectedProfileId, hit: topHit } : undefined;
+  } else {
+    const frozen = lastConfirmedHistoryTopHitRef.current;
+    const stillRelevant =
+      frozen &&
+      frozen.profileId === selectedProfileId &&
+      frozen.hit.kind === "url" &&
+      relevance(q, frozen.hit.item.title, frozen.hit.item.url) > 0;
+    if (stillRelevant) {
+      topHit = frozen.hit;
+    }
+  }
+
   // Drop the top hit from its own section to avoid showing it twice.
   const topTabKey = topHit?.kind === "tab" ? topHit.key : undefined;
   const topUrlKey = topHit?.kind === "url" ? topHit.key : undefined;
@@ -361,13 +386,15 @@ export default function Command() {
   );
   const address = isWebAddress(query) ? normalizeWebAddress(query) : undefined;
 
-  // Raycast treats an unchanged `selectedItemId` as an already-applied
-  // selection, even when the query has rebuilt the surrounding native list.
-  // Give only the Top Hit a query-scoped ID so `w` -> `we` explicitly selects
-  // the Top Hit again when both queries resolve to the same destination. The
-  // source keys below remain destination-based for duplicate removal and
-  // section stability.
-  const topHitItemId = topHit ? `${topHit.key}\u0000top-hit:${selectedProfileId}\u0000${query}` : undefined;
+  // Identify Top Hit by its destination, not by query text: a candidate that
+  // keeps winning across keystrokes must keep the same ID so it does not
+  // re-trigger the single-row isolation handoff below on every keystroke -
+  // only a destination that actually changes (or reappears after being
+  // absent) needs that handoff. `topHit.key` alone is also used as the row ID
+  // for its underlying source section (e.g. Bookmarks/History); the
+  // `TOP_HIT_ITEM_ID` prefix keeps this ID distinct from that, even though
+  // the matching row is always filtered out of its own section below.
+  const topHitItemId = topHit ? `${TOP_HIT_ITEM_ID}\u0000${topHit.key}` : undefined;
   const openAddressItemId = address ? `open-address:${address}` : undefined;
   const currentTab = !hasQuery ? openTabs.find((tab) => tab.is_current) : undefined;
   const currentTabKey = currentTab ? tabKey(currentTab) : undefined;
@@ -495,13 +522,14 @@ export default function Command() {
       };
       selectionSessionRef.current = session;
       beginAutomaticSelection(session, automaticTarget, true);
-      // `resetCommand` always makes this a new session (opening a bookmark,
-      // history item, search result, or typed address can create a brand new
-      // Orion tab). Unlike switching to an already-open tab, we cannot know
-      // that new tab's identity in advance, so there is no safe optimistic
-      // update for it - only a real Orion round trip resolves it. Kick that
-      // off now instead of waiting for the next `refreshWhileOpen` poll tick
-      // (up to a second away), so a reopened Command Bar picks it up sooner.
+      // A reopened Command Bar always starts a new session here. Opening a
+      // bookmark, history item, search result, or typed address can create a
+      // brand new Orion tab, and - unlike switching to an already-open tab -
+      // we cannot know that new tab's identity in advance, so there is no
+      // safe optimistic update for it: only a real Orion round trip resolves
+      // it. Kick that off now instead of waiting for the next
+      // `refreshWhileOpen` poll tick (up to a second away), so a reopened
+      // Command Bar picks it up sooner.
       void refresh();
       return;
     }
@@ -751,7 +779,7 @@ export default function Command() {
             subtitle={address}
             actions={
               <ActionPanel>
-                <OpenInDefaultBrowserAction url={address} immediatePopToRoot onOpen={resetCommand} />
+                <OpenInDefaultBrowserAction url={address} immediatePopToRoot />
               </ActionPanel>
             }
           />
@@ -767,11 +795,10 @@ export default function Command() {
               refresh={refresh}
               closeLaunchers
               immediatePopToRoot
-              onOpen={resetCommand}
               onActivate={markTabActive}
             />
           ) : (
-            <UrlListItem id={topHitItemId} item={topHit.item} accessory={topHit.source} onOpen={resetCommand} />
+            <UrlListItem id={topHitItemId} item={topHit.item} accessory={topHit.source} />
           )}
         </List.Section>
       )}
@@ -784,7 +811,6 @@ export default function Command() {
             refresh={refresh}
             closeLaunchers
             immediatePopToRoot
-            onOpen={resetCommand}
             onActivate={markTabActive}
           />
         </List.Section>
@@ -798,12 +824,7 @@ export default function Command() {
             title={`Search ${getSearchEngineName()} for “${query}”`}
             actions={
               <ActionPanel>
-                <OpenInOrionAction
-                  url={buildSearchUrl(query)}
-                  title="Search in Orion"
-                  immediatePopToRoot
-                  onOpen={resetCommand}
-                />
+                <OpenInOrionAction url={buildSearchUrl(query)} title="Search in Orion" immediatePopToRoot />
               </ActionPanel>
             }
           />
@@ -813,12 +834,7 @@ export default function Command() {
       {!isHandingOffAutomaticTarget && suggestionHits.length > 0 && (
         <List.Section title="Suggestions">
           {suggestionHits.map((s, i) => (
-            <SuggestionListItem
-              id={`suggestion-${i}-${s}`}
-              key={`sugg-${i}-${s}`}
-              suggestion={s}
-              onOpen={resetCommand}
-            />
+            <SuggestionListItem id={`suggestion-${i}-${s}`} key={`sugg-${i}-${s}`} suggestion={s} />
           ))}
         </List.Section>
       )}
@@ -833,7 +849,6 @@ export default function Command() {
               refresh={refresh}
               closeLaunchers
               immediatePopToRoot
-              onOpen={resetCommand}
               onActivate={markTabActive}
             />
           ))}
@@ -843,7 +858,7 @@ export default function Command() {
       {!isHandingOffAutomaticTarget && bookmarkSection.length > 0 && (
         <List.Section title="Bookmarks">
           {bookmarkSection.map((b) => (
-            <UrlListItem id={`bm-${b.uuid}`} key={`bm-${b.uuid}`} item={b} onOpen={resetCommand} />
+            <UrlListItem id={`bm-${b.uuid}`} key={`bm-${b.uuid}`} item={b} />
           ))}
         </List.Section>
       )}
@@ -851,7 +866,7 @@ export default function Command() {
       {!isHandingOffAutomaticTarget && readingSection.length > 0 && (
         <List.Section title="Reading List">
           {readingSection.map((b) => (
-            <UrlListItem id={`rl-${b.uuid}`} key={`rl-${b.uuid}`} item={b} onOpen={resetCommand} />
+            <UrlListItem id={`rl-${b.uuid}`} key={`rl-${b.uuid}`} item={b} />
           ))}
         </List.Section>
       )}
@@ -859,7 +874,7 @@ export default function Command() {
       {!isHandingOffAutomaticTarget && !permissionView && historySection.length > 0 && (
         <List.Section title="History">
           {historySection.map((h) => (
-            <UrlListItem id={`hist-${h.id}`} key={`hist-${h.id}`} item={h} onOpen={resetCommand} />
+            <UrlListItem id={`hist-${h.id}`} key={`hist-${h.id}`} item={h} />
           ))}
         </List.Section>
       )}

@@ -5,12 +5,7 @@ import { closeLauncherTabs, openInOrion } from "../utils";
 // `immediatePopToRoot` is opt-in - see OpenTabAction for why only the Command
 // Bar passes it, while the standalone Bookmarks/Reading List/History commands
 // that also render this action keep respecting the user's own preference.
-const OpenInOrionAction = (props: {
-  url: string;
-  title?: string;
-  immediatePopToRoot?: boolean;
-  onOpen?: () => void | Promise<void>;
-}) => (
+const OpenInOrionAction = (props: { url: string; title?: string; immediatePopToRoot?: boolean }) => (
   <Action
     title={props.title ?? "Open in Orion"}
     icon={Icon.Globe}
@@ -23,8 +18,6 @@ const OpenInOrionAction = (props: {
         clearRootSearch: true,
         ...(props.immediatePopToRoot ? { popToRootType: PopToRootType.Immediate } : {}),
       });
-      // Clear persistent command state only after the palette has hidden.
-      await props.onOpen?.();
     }}
   />
 );
