@@ -30,6 +30,7 @@ import {
 
 const LIMITS = { tabs: 6, bookmarks: 6, reading: 4, history: 8 };
 const TOP_HIT_ITEM_ID = "top-hit";
+const OPEN_ADDRESS_ITEM_ID = "open-address";
 const CURRENT_TAB_HANDOFF_SETTLE_MS = 50;
 const CURRENT_TAB_HANDOFF_FALLBACK_MS = 150;
 const CURRENT_TAB_FINAL_ACK_TIMEOUT_MS = 100;
@@ -395,14 +396,10 @@ export default function Command() {
   // `TOP_HIT_ITEM_ID` prefix keeps this ID distinct from that, even though
   // the matching row is always filtered out of its own section below.
   const topHitItemId = topHit ? `${TOP_HIT_ITEM_ID}\u0000${topHit.key}` : undefined;
-  const openAddressItemId = address ? `open-address:${address}` : undefined;
-  const currentTab = !hasQuery ? openTabs.find((tab) => tab.is_current) : undefined;
-  const currentTabKey = currentTab ? tabKey(currentTab) : undefined;
-  const currentTabItemId = currentTabKey;
-  const currentTabHandoffItemId = currentTabItemId ? `${currentTabItemId}\u0000current-tab-handoff` : undefined;
-
-  // A typed address is explicit navigation intent. It should take precedence
-  // over a historical search result that happens to mention the same domain.
+  const openAddressItemId = address ? `${OPEN_ADDRESS_ITEM_ID}\u0000${address}` : undefined;
+  // An empty query has no Top Hit or address to focus. Land it on whichever
+  // open tab is currently visible in Orion instead of leaving selection to an
+  // arbitrary native default.
   //
   // `currentTabItemId` identifies the tab instance (window + index) only,
   // deliberately excluding its URL. Re-anchoring on Current Tab further below
@@ -411,7 +408,11 @@ export default function Command() {
   // opened tab whose URL is still settling through redirects, otherwise
   // re-triggers the single-row isolate/settle/expand handoff for no reason,
   // producing extra, visible focus moves.
-  const automaticTarget = openAddressItemId ?? topHitItemId ?? currentTabItemId;
+  const currentTab = !hasQuery ? openTabs.find((tab) => tab.is_current) : undefined;
+  const currentTabKey = currentTab ? tabKey(currentTab) : undefined;
+  const currentTabItemId = currentTabKey;
+  const currentTabHandoffItemId = currentTabItemId ? `${currentTabItemId}\u0000current-tab-handoff` : undefined;
+  const automaticTarget = topHitItemId ?? openAddressItemId ?? currentTabItemId;
   const selectionSession = selectionSessionRef.current;
   // The first Open Tabs snapshot often arrives after Raycast has already
   // mounted a native List with row one selected. Supply the active Orion tab
